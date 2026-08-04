@@ -4,7 +4,14 @@ ENV DEBIAN_FRONTEND=noninteractive \
     HOME=/home/liveagent \
     DISPLAY=:99 \
     XDG_RUNTIME_DIR=/tmp/runtime-liveagent \
-    APPIMAGE_EXTRACT_AND_RUN=1
+    APPIMAGE_EXTRACT_AND_RUN=1 \
+    LIVEAGENT_HEADLESS=1 \
+    XVFB_SCREEN=1200x720x16 \
+    WEBKIT_DISABLE_COMPOSITING_MODE=1 \
+    WEBKIT_DISABLE_DMABUF_RENDERER=1 \
+    GTK_A11Y=none \
+    NO_AT_BRIDGE=1 \
+    GDK_BACKEND=x11
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
@@ -25,10 +32,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libdrm2 \
     libxkbcommon0 \
     libatspi2.0-0 \
+    x11-utils \
+    xdotool \
     && rm -rf /var/lib/apt/lists/*
 
 RUN useradd --create-home --uid 1000 --shell /bin/sh liveagent \
-    && mkdir -p /workspace /tmp/runtime-liveagent /opt/liveagent \
+    && mkdir -p /workspace /tmp/runtime-liveagent /opt/liveagent /tmp/.X11-unix \
+    && chmod 1777 /tmp/.X11-unix \
     && chown -R liveagent:liveagent \
         /workspace \
         /tmp/runtime-liveagent \

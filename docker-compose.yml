@@ -1,60 +1,65 @@
-# LiveAgent：独立、低资源的 Docker Agent（Xvfb，无需 XFCE/xrdp）
-#
-# 首次启动：
-#   1) cp .env.example .env
-#   2) 修改 .env（要接入 Gateway 时填写 UUID 与 agt_ 专属令牌）
-#   3) docker compose up -d --build
-#
-# 升级 AppImage：docker compose restart
-# 容器启动时会从 Stack-Cairn/LiveAgent GitHub Releases 自动检查并下载最新 Linux x86_64 AppImage。
-#
-# 未指定 name、container_name 与 volume name：Docker Compose 会按“当前目录名”自动隔离实例。
-# 将本仓库 clone 到任意目录均可运行；复制/二次 clone 到不同目录会获得独立容器与数据卷。
-
 services:
   liveagent:
-    image: local/liveagent-xvfb:latest
+    image: local/liveagent-xvfb-headless:latest
     build:
       context: .
       dockerfile: Dockerfile
 
-    restart: always
+    restart: unless-stopped
     init: true
+    stop_grace_period: 30s
 
-    # 单 Agent 资源限制；内存紧张可降为 1000m，但不建议低于 800m。
-    mem_limit: ${MEMORY_LIMIT:-1500m}
-    cpus: ${CPU_LIMIT:-1.5}
-    pids_limit: 256
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -x liveagent >/dev/null && pgrep -f WebKitWebProcess >/dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+    # 默认限制整套 Agent（含 WebKit）最多使用 0.75 核、1 GiB 内存；
+    # 可在 .env 中覆盖，繁重任务建议 CPU_LIMIT=1.0。
+    mem_limit: ${MEMORY_LIMIT:-1024m}
+    mem_reservation: ${MEMORY_RESERVATION:-512m}
+    cpus: ${CPU_LIMIT:-0.75}
+    pids_limit: 160
 
     environment:
       DISPLAY: ":99"
       XDG_RUNTIME_DIR: /tmp/runtime-liveagent
       APPIMAGE_EXTRACT_AND_RUN: "1"
 
-      # 三项全部填写时自动连接 Gateway；均留空则仅本地运行。
+      # 服务器仅通过 Gateway 使用：启动后取消映射本地窗口，但保留 WebView/JS 运行。
+      LIVEAGENT_HEADLESS: "1"
+      LIVEAGENT_VERSION: ${LIVEAGENT_VERSION:-v1.2.3}
+      XVFB_SCREEN: ${XVFB_SCREEN:-1200x720x16}
+
+      # WebKitGTK/Xvfb 优化：禁用无显示场景无意义的合成和辅助功能。
+      WEBKIT_DISABLE_COMPOSITING_MODE: "1"
+      WEBKIT_DISABLE_DMABUF_RENDERER: "1"
+      GTK_A11Y: "none"
+      NO_AT_BRIDGE: "1"
+      GDK_BACKEND: "x11"
+
       LIVEAGENT_GATEWAY_URL: ${LIVEAGENT_GATEWAY_URL:-}
       LIVEAGENT_AGENT_ID: ${LIVEAGENT_AGENT_ID:-}
       LIVEAGENT_AGENT_TOKEN: ${LIVEAGENT_AGENT_TOKEN:-}
 
     volumes:
-      # 配置、Provider Key、聊天历史、Skills、Memory、Remote 配置。
-      # 存在当前 clone 目录的 ./data，便于备份、检查与迁移；删容器不丢。
       - ./data:/home/liveagent/.liveagent
-
-      # 自动下载的 AppImage 与版本标记。
-      # 存在当前 clone 目录的 ./appimage，后续重启仅在发现新版时下载。
       - ./appimage:/opt/liveagent
-
-      # Agent 唯一可读写的宿主机工作目录：当前 clone 目录下的 workspace。
       - ./workspace:/workspace
 
     working_dir: /workspace
 
-    # 收紧容器权限。切勿添加 privileged、docker.sock、/root、/etc、/ 或 ~/.ssh 挂载。
     security_opt:
       - no-new-privileges:true
     cap_drop:
       - ALL
 
-    # 故意不映射端口；仅由 Agent 主动经 HTTPS/WSS 连出至 Gateway。
-
+    # 不开放 X11、MCP Bridge 或其他本地端口；Agent 只主动连接 Gateway。

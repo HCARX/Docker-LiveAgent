@@ -3,8 +3,8 @@
 将本仓库 clone 到任意 Linux 服务器目录后，可用 Docker 运行一个低资源、持久化的 Stack-Cairn LiveAgent Agent。
 
 ```bash
-git clone <仓库地址> <任意目录>
-cd <任意目录>
+git clone https://github.com/HCARX/Docker-LiveAgent /www/wwwroot/AI/LiveAgent
+cd /www/wwwroot/AI/LiveAgent
 cp .env.example .env
 # 编辑 .env 后启动
 docker compose up -d --build

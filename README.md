@@ -1,4 +1,8 @@
-# LiveAgent Docker运行 仅测试Debian 13 用于无桌面环境的一键部署（自动更新 AppImage）
+# LiveAgent Docker运行 仅测试Debian 13 
+用于无桌面环境的一键部署（并且实现后续更新AppImage）
+## 注意
+本教程在AI辅助下完成，并且只包含Agent部署，需要搭配作者的网关WEBUI使用哦！
+作者项目地址：https://github.com/Stack-Cairn/LiveAgent
 
 将本仓库 clone 到任意 Linux 服务器目录后，可用 Docker 运行一个低资源、持久化的 Stack-Cairn LiveAgent Agent。
 

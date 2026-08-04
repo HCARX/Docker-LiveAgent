@@ -2,7 +2,7 @@
 将本仓库 clone 到任意 Linux 服务器目录后，可用 Docker 运行一个低资源、持久化的 Stack-Cairn LiveAgent Agent。
 用于无桌面环境的一键部署（并且实现后续更新AppImage）
 ## 注意
-本教程在AI辅助下完成，并且只包含Agent部署，需要搭配作者的网关WEBUI使用哦！
+本教程在AI辅助下完成，并且只包含Agent部署，**需要搭配作者的网关WEBUI使用哦！**
 作者项目地址：https://github.com/Stack-Cairn/LiveAgent
 
 容器内部通过 Xvfb 虚拟显示器运行 LiveAgent；不需要宿主机安装 XFCE、xrdp 或图形桌面。

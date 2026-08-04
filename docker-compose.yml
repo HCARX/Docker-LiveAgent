@@ -1,0 +1,60 @@
+# LiveAgent：独立、低资源的 Docker Agent（Xvfb，无需 XFCE/xrdp）
+#
+# 首次启动：
+#   1) cp .env.example .env
+#   2) 修改 .env（要接入 Gateway 时填写 UUID 与 agt_ 专属令牌）
+#   3) docker compose up -d --build
+#
+# 升级 AppImage：docker compose restart
+# 容器启动时会从 Stack-Cairn/LiveAgent GitHub Releases 自动检查并下载最新 Linux x86_64 AppImage。
+#
+# 未指定 name、container_name 与 volume name：Docker Compose 会按“当前目录名”自动隔离实例。
+# 将本仓库 clone 到任意目录均可运行；复制/二次 clone 到不同目录会获得独立容器与数据卷。
+
+services:
+  liveagent:
+    image: local/liveagent-xvfb:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    restart: always
+    init: true
+
+    # 单 Agent 资源限制；内存紧张可降为 1000m，但不建议低于 800m。
+    mem_limit: ${MEMORY_LIMIT:-1500m}
+    cpus: ${CPU_LIMIT:-1.5}
+    pids_limit: 256
+
+    environment:
+      DISPLAY: ":99"
+      XDG_RUNTIME_DIR: /tmp/runtime-liveagent
+      APPIMAGE_EXTRACT_AND_RUN: "1"
+
+      # 三项全部填写时自动连接 Gateway；均留空则仅本地运行。
+      LIVEAGENT_GATEWAY_URL: ${LIVEAGENT_GATEWAY_URL:-}
+      LIVEAGENT_AGENT_ID: ${LIVEAGENT_AGENT_ID:-}
+      LIVEAGENT_AGENT_TOKEN: ${LIVEAGENT_AGENT_TOKEN:-}
+
+    volumes:
+      # 配置、Provider Key、聊天历史、Skills、Memory、Remote 配置。
+      # 存在当前 clone 目录的 ./data，便于备份、检查与迁移；删容器不丢。
+      - ./data:/home/liveagent/.liveagent
+
+      # 自动下载的 AppImage 与版本标记。
+      # 存在当前 clone 目录的 ./appimage，后续重启仅在发现新版时下载。
+      - ./appimage:/opt/liveagent
+
+      # Agent 唯一可读写的宿主机工作目录：当前 clone 目录下的 workspace。
+      - ./workspace:/workspace
+
+    working_dir: /workspace
+
+    # 收紧容器权限。切勿添加 privileged、docker.sock、/root、/etc、/ 或 ~/.ssh 挂载。
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+    # 故意不映射端口；仅由 Agent 主动经 HTTPS/WSS 连出至 Gateway。
+

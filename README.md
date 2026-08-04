@@ -4,8 +4,6 @@
 
 ```bash
 git clone https://github.com/HCARX/Docker-LiveAgent /www/wwwroot/AI
-
-
 ```
 
 容器内部通过 Xvfb 虚拟显示器运行 LiveAgent；不需要宿主机安装 XFCE、xrdp 或图形桌面。

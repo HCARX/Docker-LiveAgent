@@ -45,7 +45,7 @@ Docker 容器
 ## 前置要求
 
 - Linux x86_64；
-- Docker Engine 与 Docker Compose v2；
+- Docker Engine 与 Docker Compose；
 - Docker 开机启动：
 
 ```bash

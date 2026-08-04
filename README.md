@@ -58,7 +58,7 @@ sudo systemctl enable --now docker containerd
 ### 1. 创建运行目录与权限
 
 ```bash
-cd /www/wwwroot/AI/LiveAgent
+cd /www/wwwroot/AI
 mkdir -p data appimage workspace
 
 # 容器内 Agent 使用 UID/GID 1000（liveagent）。

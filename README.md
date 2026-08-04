@@ -73,7 +73,8 @@ chmod 600 .env
 
 > 如使用 root 执行 Docker，仍应保留上述 `1000:1000` 权限，因为容器内程序默认以非 root 的 `liveagent` 用户运行。
 
-### 2. 配置 Gateway（可选）
+### 2. 配置 Gateway
+确保按照 [需要远程访问? 部署 Gateway](https://github.com/Stack-Cairn/LiveAgent/blob/main/README.zh-CN.md#%E9%9C%80%E8%A6%81%E8%BF%9C%E7%A8%8B%E8%AE%BF%E9%97%AE-%E9%83%A8%E7%BD%B2-gateway) 完成WEBUI部署
 
 生成新 Agent UUID：
 
@@ -81,7 +82,7 @@ chmod 600 .env
 echo "agent-$(cat /proc/sys/kernel/random/uuid)"
 ```
 
-在 Gateway 中注册这个 UUID，并签发**绑定此 UUID**的 Agent 专属 Token：
+在 Gateway 中设置/多客户端管理/新增客户端 注册这个 UUID，并签发**绑定此 UUID**的 Agent 专属 Token：
 
 ```text
 agt_...

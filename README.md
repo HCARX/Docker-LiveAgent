@@ -3,11 +3,9 @@
 将本仓库 clone 到任意 Linux 服务器目录后，可用 Docker 运行一个低资源、持久化的 Stack-Cairn LiveAgent Agent。
 
 ```bash
-git clone https://github.com/HCARX/Docker-LiveAgent /www/wwwroot/AI/LiveAgent
-cd /www/wwwroot/AI/LiveAgent
-cp .env.example .env
-# 编辑 .env 后启动
-docker compose up -d --build
+git clone https://github.com/HCARX/Docker-LiveAgent /www/wwwroot/AI
+
+
 ```
 
 容器内部通过 Xvfb 虚拟显示器运行 LiveAgent；不需要宿主机安装 XFCE、xrdp 或图形桌面。
@@ -60,6 +58,7 @@ sudo systemctl enable --now docker containerd
 ### 1. 创建运行目录与权限
 
 ```bash
+cd /www/wwwroot/AI/LiveAgent
 mkdir -p data appimage workspace
 
 # 容器内 Agent 使用 UID/GID 1000（liveagent）。

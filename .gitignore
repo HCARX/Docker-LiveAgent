@@ -1,5 +1,6 @@
 # 私密配置与运行时数据均不提交 Git
 .env
 data/
+webview-data/
 appimage/
 workspace/

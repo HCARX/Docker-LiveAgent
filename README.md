@@ -14,7 +14,7 @@
 - 默认限制每个实例使用 `0.75 CPU / 1 GiB RAM`；
 - 内置健康检查、日志轮转和优雅停止；
 - 自动下载官方 Linux x86_64 AppImage，支持固定版本或跟随 latest；
-- 配置、历史、AppImage 和工作区使用宿主机目录持久化；
+- 配置、历史、Skills、WebKit UI 状态、AppImage 和工作区使用宿主机目录持久化；
 - 默认以非 root 用户运行，不挂载 Docker Socket 或宿主机系统目录；
 - 将仓库复制或 clone 到不同目录即可运行多个相互隔离的 Agent。
 
@@ -40,6 +40,7 @@ Docker-LiveAgent/
 ├── .env.example                    # 环境变量示例
 ├── .env                            # 私密配置，不应提交 Git
 ├── data/                           # 配置、Provider、历史、Memory、Skills
+├── webview-data/                   # WebKit localStorage（Skills 启用状态等）
 ├── appimage/                       # AppImage 与版本标记
 └── workspace/                      # 默认唯一可读写的宿主机工作目录
 ```
@@ -47,9 +48,10 @@ Docker-LiveAgent/
 容器内挂载关系：
 
 ```text
-./data/      → /home/liveagent/.liveagent
-./appimage/  → /opt/liveagent
-./workspace/ → /workspace
+./data/         → /home/liveagent/.liveagent
+./webview-data/ → /home/liveagent/.local/share/com.xiaofei.liveagent
+./appimage/     → /opt/liveagent
+./workspace/    → /workspace
 ```
 
 删除或重建容器不会删除上述目录中的数据。
@@ -75,9 +77,9 @@ sudo systemctl enable --now docker containerd
 git clone https://github.com/HCARX/Docker-LiveAgent.git /opt/liveagent
 cd /opt/liveagent
 
-mkdir -p data appimage workspace
-sudo chown -R 1000:1000 data appimage workspace
-chmod 700 data appimage workspace
+mkdir -p data webview-data appimage workspace
+sudo chown -R 1000:1000 data webview-data appimage workspace
+chmod 700 data webview-data appimage workspace
 
 cp .env.example .env
 chmod 600 .env
@@ -213,7 +215,40 @@ docker compose down
 docker compose up -d --build
 ```
 
-只要不删除 `data/`、`appimage/` 和 `workspace/`，配置与历史不会丢失。
+只要不删除 `data/`、`webview-data/`、`appimage/` 和 `workspace/`，配置、历史及 Skills 启用状态就不会丢失。
+
+### 从旧版部署升级：保留 Skills 启用状态
+
+旧版 Compose 只挂载了 `~/.liveagent`，但 LiveAgent 会将 Skills 总开关、已选择的 Skills、当前模型、主题和部分 UI 设置保存在 WebKit localStorage：
+
+```text
+/home/liveagent/.local/share/com.xiaofei.liveagent
+```
+
+这个目录不在 `data/` 内。旧版部署执行 `docker compose up -d --build --force-recreate` 时，旧容器被删除，未挂载的 localStorage 也会随之删除，因此已安装的 Skill 文件仍然存在，但启用状态会恢复默认。
+
+首次升级到包含 `webview-data` 挂载的新版本前，建议停止容器并迁移现有 WebKit 数据：
+
+```bash
+cd /path/to/liveagent
+docker compose stop liveagent
+mkdir -p webview-data
+docker cp "$(docker compose ps -aq liveagent)":/home/liveagent/.local/share/com.xiaofei.liveagent/. ./webview-data/
+sudo chown -R 1000:1000 webview-data
+chmod 700 webview-data
+docker compose up -d --build --force-recreate
+```
+
+如果旧容器已经被删除，则无法从旧容器恢复该 localStorage；直接创建目录并启动，然后在 WebUI 中重新启用一次 Skills 即可：
+
+```bash
+mkdir -p webview-data
+sudo chown -R 1000:1000 webview-data
+chmod 700 webview-data
+docker compose up -d --build --force-recreate
+```
+
+此后重建容器会继续使用 `webview-data/` 中的 Skills 和 UI 状态。
 
 ## 版本更新策略
 
@@ -283,19 +318,19 @@ tar -czf liveagent-data-$(date +%F).tar.gz data/
 
 ```bash
 tar -czf liveagent-backup-$(date +%F).tar.gz \
-  data/ appimage/ workspace/ .env
+  data/ webview-data/ appimage/ workspace/ .env
 ```
 
 备份中可能包含 API Key、Gateway Token、聊天记录和工作文件，请加密保存，不要上传至公开仓库。
 
 ### 迁移
 
-在旧服务器停止实例，将仓库目录连同 `.env`、`data/`、`appimage/` 和 `workspace/` 复制到新服务器，然后执行：
+在旧服务器停止实例，将仓库目录连同 `.env`、`data/`、`webview-data/`、`appimage/` 和 `workspace/` 复制到新服务器，然后执行：
 
 ```bash
 cd /path/to/liveagent
-sudo chown -R 1000:1000 data appimage workspace
-chmod 700 data appimage workspace
+sudo chown -R 1000:1000 data webview-data appimage workspace
+chmod 700 data webview-data appimage workspace
 chmod 600 .env
 docker compose up -d --build
 ```
@@ -386,8 +421,8 @@ docker compose logs --tail=300 liveagent
 ### SQLite、AppImage 或工作区权限错误
 
 ```bash
-sudo chown -R 1000:1000 data appimage workspace
-chmod 700 data appimage workspace
+sudo chown -R 1000:1000 data webview-data appimage workspace
+chmod 700 data webview-data appimage workspace
 docker compose restart
 ```
 
@@ -453,6 +488,7 @@ LIVEAGENT_HEADLESS: "0"
 ```text
 .env
 data/
+webview-data/
 appimage/
 workspace/
 *.sqlite
@@ -491,10 +527,10 @@ entrypoint.sh
 
 ```bash
 docker compose down
-rm -rf data appimage workspace
+rm -rf data webview-data appimage workspace
 ```
 
-该操作会删除Provider/API Key、聊天记录、Memory、Skills、Remote设置、下载的AppImage和工作文件。执行前请先备份。
+该操作会删除Provider/API Key、聊天记录、Memory、Skills、Skills 启用状态、其他本地 UI 设置、Remote设置、下载的AppImage和工作文件。执行前请先备份。
 
 ## 许可证与致谢
 

@@ -36,7 +36,8 @@ services:
       # 高危：可管理宿主机所有 Docker 容器、镜像和卷。
       - /var/run/docker.sock:/var/run/docker.sock
 
-      # 保留基础配置中的持久化数据、AppImage 缓存和当前 clone 目录下的独立工作区。
+      # 保留基础配置中的持久化数据、WebKit UI 状态、AppImage 缓存和独立工作区。
       - ./data:/home/liveagent/.liveagent
+      - ./webview-data:/home/liveagent/.local/share/com.xiaofei.liveagent
       - ./appimage:/opt/liveagent
       - ./workspace:/workspace

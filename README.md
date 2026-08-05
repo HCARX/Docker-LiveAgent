@@ -1,149 +1,188 @@
-# LiveAgent Docker运行 仅测试Debian 13 
-将本仓库 clone 到任意 Linux 服务器目录后，可用 Docker 运行一个低资源、持久化的 Stack-Cairn LiveAgent Agent。
-用于无桌面环境的一键部署（并且实现后续更新AppImage）
-## 注意
-本教程在AI辅助下完成，并且只包含Agent部署，**需要搭配作者的网关WEBUI使用哦！**
-作者项目地址：https://github.com/Stack-Cairn/LiveAgent
+# Docker LiveAgent（无桌面服务器 / Gateway 模式）
 
-容器内部通过 Xvfb 虚拟显示器运行 LiveAgent；不需要宿主机安装 XFCE、xrdp 或图形桌面。
+在 Linux 服务器上通过 Docker 运行 [Stack-Cairn/LiveAgent](https://github.com/Stack-Cairn/LiveAgent) Agent，并从远程 Gateway WebUI 使用。
 
-## 当前目录结构
+本项目适用于**不需要在服务器本地查看图形界面**的场景：容器仍使用 WebKitGTK 和 Xvfb 启动官方 LiveAgent AppImage，但会在启动后取消映射本地窗口，使 WebKit 进入后台节流状态，从而显著降低空闲 CPU 和内存占用。
+
+> 本项目不是 LiveAgent 官方仓库，仅提供第三方 Docker 部署方案。目前官方桌面端的 Agent 运行时仍依赖 WebView JavaScript，因此不能彻底删除 WebKit；本项目实现的是“保留运行时、隐藏本地窗口、通过 Gateway 操作”的轻量化方案。
+
+## 主要特性
+
+- Debian 13 + Xvfb + WebKitGTK，无需安装 XFCE、xrdp 或宿主机桌面；
+- 启动后自动取消映射本地 LiveAgent 窗口，仅通过 Gateway 使用；
+- 禁用无显示环境中不必要的 WebKit 合成、DMA-BUF 渲染和 GTK 辅助功能；
+- 默认限制每个实例使用 `0.75 CPU / 1 GiB RAM`；
+- 内置健康检查、日志轮转和优雅停止；
+- 自动下载官方 Linux x86_64 AppImage，支持固定版本或跟随 latest；
+- 配置、历史、AppImage 和工作区使用宿主机目录持久化；
+- 默认以非 root 用户运行，不挂载 Docker Socket 或宿主机系统目录；
+- 将仓库复制或 clone 到不同目录即可运行多个相互隔离的 Agent。
+
+## 优化效果参考
+
+以下数据来自一台 6 核 Linux 服务器上两个空闲 Agent 实例的实测，实际占用会随版本、模型请求和任务负载变化：
+
+| 状态 | 单实例 WebKit CPU | 单实例内存 |
+|---|---:|---:|
+| 优化前（窗口持续映射） | 约 130% | 约 470–600 MiB |
+| 优化后（窗口取消映射） | 通常约 1–4% | 约 285–305 MiB |
+
+任务执行期间 CPU 和内存会临时升高，Compose 中的资源限制会防止单实例长期占满服务器。
+
+## 目录结构
 
 ```text
-当前 clone 目录/
-├── docker-compose.yml              # 默认隔离模式
-├── docker-compose.full-access.yml  # 可选：完整宿主机权限（高风险）
-├── Dockerfile                      # 运行时镜像定义
-├── entrypoint.sh                   # 自动更新 AppImage、启动 Xvfb 与 LiveAgent
-├── .env.example                    # 环境变量模板
-├── .env                            # 私密配置；由 .gitignore 排除
-├── README.md
-├── data/                           # 配置、Provider、历史、Memory、Skills；由 .gitignore 排除
-├── appimage/                       # 自动下载的 AppImage 和 version；由 .gitignore 排除
-└── workspace/                      # Agent 默认唯一可写的宿主机工作目录；由 .gitignore 排除
+Docker-LiveAgent/
+├── docker-compose.yml              # 默认安全、无桌面 Gateway 模式
+├── docker-compose.full-access.yml  # 可选：完整宿主机权限（极高风险）
+├── Dockerfile                      # Debian、WebKitGTK、Xvfb 运行环境
+├── entrypoint.sh                   # AppImage 下载、Gateway 配置和窗口隐藏
+├── .env.example                    # 环境变量示例
+├── .env                            # 私密配置，不应提交 Git
+├── data/                           # 配置、Provider、历史、Memory、Skills
+├── appimage/                       # AppImage 与版本标记
+└── workspace/                      # 默认唯一可读写的宿主机工作目录
 ```
 
-`data/`、`appimage/`、`workspace/` 都是当前 clone 目录下的 bind mount，不是隐藏的 Docker named volume。因此可直接查看、备份或整体迁移当前目录。
-
-默认结构：
+容器内挂载关系：
 
 ```text
-Docker 容器
-├─ Debian 13 + Xvfb + WebKitGTK
-├─ /opt/liveagent       ← 当前目录 ./appimage/
-├─ ~/.liveagent         ← 当前目录 ./data/
-└─ /workspace           ← 当前目录 ./workspace/
+./data/      → /home/liveagent/.liveagent
+./appimage/  → /opt/liveagent
+./workspace/ → /workspace
 ```
 
-> Compose 未固定 `name`、`container_name` 和 volume name。不同 clone 目录会自动形成独立 Compose 项目与容器；同时每个目录的 `data/`、`appimage/`、`workspace/` 也天然独立。
+删除或重建容器不会删除上述目录中的数据。
 
-## 前置要求
+## 系统要求
 
 - Linux x86_64；
-- Docker Engine 与 Docker Compose；
-- Docker 开机启动：
+- Docker Engine；
+- Docker Compose v2（`docker compose`）；
+- 容器能够访问 `api.github.com`、`github.com` 和你的 Gateway HTTPS/WSS 地址。
+
+建议启用 Docker 开机启动：
 
 ```bash
 sudo systemctl enable --now docker containerd
 ```
 
-- 容器可访问 `api.github.com` 与 `github.com`；
-- 如需远程管理，容器还应能访问 Gateway 的 HTTPS/WSS 域名。
+## 快速部署
 
-## 首次部署
-
-### 1. 创建运行目录与权限
+### 1. Clone 仓库并创建持久化目录
 
 ```bash
-git clone https://github.com/HCARX/Docker-LiveAgent /www/wwwroot/AI
-```
+git clone https://github.com/HCARX/Docker-LiveAgent.git /opt/liveagent
+cd /opt/liveagent
 
-```bash
-cd /www/wwwroot/AI
 mkdir -p data appimage workspace
-
-# 容器内 Agent 使用 UID/GID 1000（liveagent）。
-# 这三项必须可被 UID 1000 写入，否则会出现配置数据库、AppImage 下载或工作区权限错误。
-chown -R 1000:1000 data appimage workspace
+sudo chown -R 1000:1000 data appimage workspace
 chmod 700 data appimage workspace
 
 cp .env.example .env
 chmod 600 .env
 ```
 
-> 如使用 root 执行 Docker，仍应保留上述 `1000:1000` 权限，因为容器内程序默认以非 root 的 `liveagent` 用户运行。
+容器内 LiveAgent 默认使用 UID/GID `1000`。若目录不可写，可能出现 SQLite 无法打开、AppImage 无法下载或工作区权限错误。
 
 ### 2. 配置 Gateway
-确保按照 [需要远程访问? 部署 Gateway](https://github.com/Stack-Cairn/LiveAgent/blob/main/README.zh-CN.md#%E9%9C%80%E8%A6%81%E8%BF%9C%E7%A8%8B%E8%AE%BF%E9%97%AE-%E9%83%A8%E7%BD%B2-gateway) 完成WEBUI部署
 
-生成新 Agent UUID：
+先按照 LiveAgent 官方文档部署 Gateway：
+
+- [LiveAgent 官方仓库](https://github.com/Stack-Cairn/LiveAgent)
+- [远程 Gateway 部署说明](https://github.com/Stack-Cairn/LiveAgent/blob/main/README.zh-CN.md#需要远程访问-部署-gateway)
+
+生成当前 Agent 的唯一 UUID：
 
 ```bash
 echo "agent-$(cat /proc/sys/kernel/random/uuid)"
 ```
 
-在 Gateway 中设置/多客户端管理/新增客户端 注册这个 UUID，并签发**绑定此 UUID**的 Agent 专属 Token：
-
-```text
-agt_...
-```
-
-编辑 `.env`：
-
-```bash
-nano .env
-```
-
-示例：
+在 Gateway 的多客户端管理中注册该 UUID，并签发与其绑定的 `agt_...` Agent Token。然后编辑 `.env`：
 
 ```ini
 LIVEAGENT_GATEWAY_URL=https://your-gateway.example.com
-LIVEAGENT_AGENT_ID=agent-你的UUID
-LIVEAGENT_AGENT_TOKEN=agt_绑定该UUID的专属令牌
+LIVEAGENT_AGENT_ID=agent-REPLACE-WITH-YOUR-UUID
+LIVEAGENT_AGENT_TOKEN=agt_REPLACE-WITH-TOKEN-BOUND-TO-THE-UUID
 
-MEMORY_LIMIT=1500m
-CPU_LIMIT=1.5
+# 资源限制
+MEMORY_LIMIT=1024m
+MEMORY_RESERVATION=512m
+CPU_LIMIT=0.75
+
+# 建议生产环境固定经过验证的版本；留空表示每次启动查询 latest
+LIVEAGENT_VERSION=v1.2.3
+
+# 虚拟显示参数，一般无需修改
+XVFB_SCREEN=1200x720x16
 ```
 
-若暂时不接 Gateway，将前三项留空；Agent 仍会在容器中运行，但不会出现在 Gateway WebUI 中。
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `LIVEAGENT_GATEWAY_URL` | 空 | Gateway HTTPS 地址，不要以 `/` 结尾 |
+| `LIVEAGENT_AGENT_ID` | 空 | 当前实例唯一的 `agent-...` UUID |
+| `LIVEAGENT_AGENT_TOKEN` | 空 | 与该 UUID 绑定的 `agt_...` Token |
+| `MEMORY_LIMIT` | `1024m` | 容器内存硬限制 |
+| `MEMORY_RESERVATION` | `512m` | 容器内存软预留 |
+| `CPU_LIMIT` | `0.75` | 容器可用 CPU 核数 |
+| `LIVEAGENT_VERSION` | `v1.2.3` | 固定官方 Release；设为空则跟随 latest |
+| `XVFB_SCREEN` | `1200x720x16` | Xvfb 虚拟屏幕尺寸与色深 |
 
-| 变量 | 含义 |
-|---|---|
-| `LIVEAGENT_GATEWAY_URL` | Gateway HTTPS 地址 |
-| `LIVEAGENT_AGENT_ID` | 当前实例唯一的 `agent-...` UUID |
-| `LIVEAGENT_AGENT_TOKEN` | 绑定此 UUID 的 `agt_...` 专属 Token |
-| `MEMORY_LIMIT` | 单实例内存限制，建议 1500m，不建议低于 800m |
-| `CPU_LIMIT` | 单实例 CPU 核数限制 |
+> WebUI 登录使用 Gateway 的共享管理 Token；Agent 连接 Gateway 使用绑定 UUID 的 `agt_...` 专属 Token，两者不能混用。
 
-> WebUI 登录使用 Gateway **共享管理 Token**；Agent 容器连接 Gateway 使用绑定 UUID 的 **`agt_...` 专属 Token**。两者不能混用。
-
-### 3. 构建与启动
+### 3. 构建并启动
 
 ```bash
 docker compose up -d --build
 ```
 
-首次启动会：
-
-```text
-构建 Debian + GTK/WebKit/Xvfb 镜像
-→ 使用当前目录的 data/、appimage/、workspace/
-→ 查询 Stack-Cairn/LiveAgent 官方 Latest Release
-→ 下载最新 Linux x86_64 AppImage 到 ./appimage/
-→ 启动 Xvfb 和 LiveAgent
-→ 若 .env 三项齐全，自动连接 Gateway
-```
-
-查看状态和日志：
+查看状态：
 
 ```bash
 docker compose ps
-docker compose logs -f liveagent
+docker compose logs --tail=100 liveagent
 ```
 
-## 日常操作
+正常启动日志应包含类似内容：
 
-### 查看状态、日志与资源
+```text
+[LiveAgent] Using cached AppImage: v1.2.3
+[LiveAgent] Local window unmapped; Gateway mode remains active.
+```
+
+约 30 秒后，容器状态应显示 `healthy`。
+
+## 工作原理
+
+启动流程：
+
+```text
+读取 .env
+→ 获取指定版本或 latest Release 信息
+→ 下载/复用官方 Linux x86_64 AppImage
+→ 将 Gateway 设置写入持久化 SQLite
+→ 启动 Xvfb
+→ 启动 LiveAgent AppImage
+→ 等待 Tauri 创建本地窗口
+→ 使用 xdotool 取消窗口映射
+→ 保留 WebView JavaScript 与 Gateway WebSocket 运行
+```
+
+关键优化环境变量：
+
+```text
+WEBKIT_DISABLE_COMPOSITING_MODE=1
+WEBKIT_DISABLE_DMABUF_RENDERER=1
+GTK_A11Y=none
+NO_AT_BRIDGE=1
+GDK_BACKEND=x11
+```
+
+窗口隐藏后，WebKit 会降低动画、重绘和部分计时器开销；LiveAgent Rust 侧仍会维持 Gateway 状态心跳和连接。
+
+## 日常管理
+
+### 查看状态、日志和资源
 
 ```bash
 docker compose ps
@@ -151,132 +190,146 @@ docker compose logs --tail=200 liveagent
 docker stats
 ```
 
-### 停止和恢复（保留全部数据）
+### 停止、启动和重启
 
 ```bash
 docker compose stop
 docker compose start
+docker compose restart
 ```
 
-### 重启并检查官方新版 AppImage
+配置使用 `restart: unless-stopped`：异常退出、Docker 重启或服务器重启后会自动恢复，但被管理员明确停止的容器不会在 Docker 重启后自行启动。
+
+### 重建容器但保留数据
+
+```bash
+docker compose up -d --build --force-recreate
+```
+
+### 删除容器但保留数据
+
+```bash
+docker compose down
+docker compose up -d --build
+```
+
+只要不删除 `data/`、`appimage/` 和 `workspace/`，配置与历史不会丢失。
+
+## 版本更新策略
+
+### 固定版本（推荐生产环境）
+
+在 `.env` 中设置：
+
+```ini
+LIVEAGENT_VERSION=v1.2.3
+```
+
+修改版本号后执行：
+
+```bash
+docker compose up -d --build --force-recreate
+```
+
+入口脚本会下载相应官方 Release 的 AppImage。
+
+### 自动跟随 latest
+
+将 `.env` 中该项留空：
+
+```ini
+LIVEAGENT_VERSION=
+```
+
+此后每次容器启动都会检查官方 latest；仅版本变化时重新下载：
 
 ```bash
 docker compose restart
 ```
 
-每次容器启动均查询 GitHub latest release。只有发现版本变化时才下载新版，下载文件与 `version` 标记均可直接在当前目录查看：
+> 自动跟随 latest 可能引入未经验证的版本变化。生产服务器更建议先测试，再手动更新固定版本号。
+
+## 健康检查与日志
+
+Compose 每 30 秒检查：
+
+- `liveagent` 主进程存在；
+- `WebKitWebProcess` 存在。
+
+查看健康状态：
 
 ```bash
-ls -lh appimage/
-cat appimage/version
+docker inspect --format '{{.State.Health.Status}}' "$(docker compose ps -q liveagent)"
 ```
 
-### 删除容器再重建（保留所有配置和文件）
+Docker JSON 日志默认轮转：
+
+```text
+单文件最大 10 MiB
+最多保留 3 个文件
+```
+
+容器停止时提供 30 秒优雅退出时间，以降低 SQLite 状态未写完的风险。
+
+## 备份与迁移
+
+### 仅备份配置和历史
 
 ```bash
-docker compose rm -sf liveagent
-docker compose up -d
+tar -czf liveagent-data-$(date +%F).tar.gz data/
 ```
 
-因为运行数据都在当前目录的 `data/`、`appimage/`、`workspace/`，删除容器不会丢失它们。
-
-## 自动启动与稳定性
-
-`docker-compose.yml` 使用：
-
-```yaml
-restart: always
-```
-
-Docker 服务启用后，服务器重启、Docker 重启、LiveAgent 异常退出后，容器都会自动恢复。Gateway 或网络晚于容器恢复时，Agent 的自动重连会持续尝试上线。
-
-## 更新、备份和迁移
-
-### 更新 AppImage
-
-官方发新版本后只需：
+### 备份完整实例
 
 ```bash
-docker compose restart
+tar -czf liveagent-backup-$(date +%F).tar.gz \
+  data/ appimage/ workspace/ .env
 ```
 
-脚本会自动查询最新版本并下载。无需手动替换 AppImage，也无需重建基础镜像。
+备份中可能包含 API Key、Gateway Token、聊天记录和工作文件，请加密保存，不要上传至公开仓库。
 
-### 备份
+### 迁移
 
-仅备份 Agent 配置与历史：
-
-```bash
-tar czf liveagent-data-$(date +%F).tar.gz data/
-```
-
-备份完整实例（配置、缓存 AppImage、工作文件）：
+在旧服务器停止实例，将仓库目录连同 `.env`、`data/`、`appimage/` 和 `workspace/` 复制到新服务器，然后执行：
 
 ```bash
-tar czf liveagent-backup-$(date +%F).tar.gz data/ appimage/ workspace/ .env
-```
-
-备份中可能含有 API Key、对话记录和 Token，请妥善加密保存。
-
-### 迁移到另一台服务器
-
-停止旧实例后，复制当前 clone 目录（包括隐藏的 `.env`）到新服务器，确保 Docker 已安装，然后执行：
-
-```bash
-chown -R 1000:1000 data appimage workspace
+cd /path/to/liveagent
+sudo chown -R 1000:1000 data appimage workspace
 chmod 700 data appimage workspace
 chmod 600 .env
 docker compose up -d --build
 ```
 
-### 危险：彻底重置
-
-```bash
-docker compose down
-rm -rf data appimage workspace
-```
-
-这会删除 Agent 的 Provider/API Key、聊天记录、Memory、Skills、Remote 配置、下载的 AppImage 和工作文件。执行前请先备份。
-
 ## 运行多个 Agent
 
-将仓库 clone 到不同目录，每个目录使用独立的 `.env`、`data/`、`appimage/` 与 `workspace/`：
+为每个实例使用独立目录、UUID 和 Token：
 
 ```bash
-git clone <仓库地址> /opt/liveagent-1
-git clone <仓库地址> /opt/liveagent-2
+git clone https://github.com/HCARX/Docker-LiveAgent.git /opt/liveagent-1
+git clone https://github.com/HCARX/Docker-LiveAgent.git /opt/liveagent-2
+```
 
-cd /opt/liveagent-1
-mkdir -p data appimage workspace
-chown -R 1000:1000 data appimage workspace
-cp .env.example .env
-# 填 Agent 1 的 UUID / agt_ Token
-docker compose up -d --build
+分别在两个目录中创建 `.env` 和持久化目录，再运行：
 
-cd /opt/liveagent-2
-mkdir -p data appimage workspace
-chown -R 1000:1000 data appimage workspace
-cp .env.example .env
-# 填 Agent 2 的 UUID / agt_ Token
+```bash
 docker compose up -d --build
 ```
 
-两个 Agent 必须使用不同的 UUID 和不同的 `agt_` 专属 Token。无需修改 YAML；容器内都可使用 `DISPLAY=:99`，因为容器之间隔离，不会冲突。
+Compose 会根据目录名自动隔离项目和容器。各容器内部都可使用 `DISPLAY=:99`，不会相互冲突。
 
-## 默认隔离权限
+## 默认安全边界
 
-默认配置为：
+默认配置包括：
 
-```text
-容器内非 root 用户 liveagent（UID 1000）
-无 Linux capabilities
-no-new-privileges
-无 Docker Socket
-无宿主机系统目录挂载
-仅当前目录 ./workspace 可写
-```
+- 非 root 用户 `liveagent`（UID 1000）；
+- `cap_drop: ALL`；
+- `no-new-privileges:true`；
+- 不映射任何入站端口；
+- 不挂载 Docker Socket；
+- 不挂载 `/root`、`/etc`、`/` 或 `~/.ssh`；
+- Agent 默认只能读写当前实例的 `workspace/` 和自身持久化目录。
 
-不要在基础配置中添加：
+不要把以下内容加入默认配置：
 
 ```text
 privileged: true
@@ -289,7 +342,7 @@ privileged: true
 
 ## 完整宿主机访问模式（极高风险）
 
-仓库提供 `docker-compose.full-access.yml`。需要明确授予完整服务器运维能力时，执行：
+仓库中的 `docker-compose.full-access.yml` 可让 Agent 获得接近宿主机 root 的权限：
 
 ```bash
 docker compose \
@@ -298,28 +351,19 @@ docker compose \
   up -d --build
 ```
 
-它会授予：
+该模式会启用：
 
 ```text
-/host                 → 宿主机根目录读写
-/var/run/docker.sock  → 宿主机全部 Docker 管理权限
-pid: host             → 查看宿主机进程
-network_mode: host    → 直接使用宿主机网络
-privileged: true      → 高权限设备和 Linux capabilities
+/:/host:rw,rshared
+/var/run/docker.sock
+pid: host
+network_mode: host
+privileged: true
 ```
 
-容器中操作真实服务器文件请使用 `/host/...`：
+容器中通过 `/host/...` 操作真实服务器文件。此模式可能让模型、MCP、Skill 或恶意提示直接控制整台服务器，除非完全理解风险，否则不要启用。
 
-```bash
-ls -la /host/www
-cat /host/etc/os-release
-```
-
-`/:/host` 是 bind mount，只呈现同一份宿主机文件，**不会复制文件或使磁盘空间翻倍**。
-
-此模式几乎等同于将 root 级服务器权限交给 Agent；只有在你信任模型、Skills/MCP、外部输入与 Gateway 访问控制时才使用。
-
-### 切回默认隔离模式
+切回默认隔离模式：
 
 ```bash
 docker compose \
@@ -330,52 +374,41 @@ docker compose \
 docker compose up -d
 ```
 
-这不会删除当前目录的 `data/`、`appimage/` 或 `workspace/`。
-
 ## 故障排查
 
-### 容器未启动或持续重启
+### 容器启动失败或持续重启
 
 ```bash
 docker compose ps
 docker compose logs --tail=300 liveagent
 ```
 
-### `Permission denied` / SQLite 无法写入 / 无法下载 AppImage
-
-在当前目录重新修复容器用户权限：
+### SQLite、AppImage 或工作区权限错误
 
 ```bash
-chown -R 1000:1000 data appimage workspace
+sudo chown -R 1000:1000 data appimage workspace
 chmod 700 data appimage workspace
-```
-
-然后重启：
-
-```bash
 docker compose restart
 ```
 
-### 无法下载最新 AppImage
-
-检查容器是否可访问 GitHub：
+### 无法下载 AppImage
 
 ```bash
 docker compose exec liveagent curl -I https://api.github.com
 docker compose exec liveagent curl -I https://github.com
 ```
 
-### Agent 在 Gateway 显示离线
+如固定版本不存在，日志会显示 GitHub Release API 返回错误。请检查 `LIVEAGENT_VERSION` 是否与官方标签完全一致。
 
-检查 `.env` 中的 URL、UUID、`agt_` Token 是否全部填写，且 Token 确实绑定对应 UUID：
+### Agent 在 Gateway 中离线
+
+确认 `.env` 中三项均填写且 Token 与 UUID 对应：
 
 ```bash
 docker compose logs --tail=300 liveagent
 ```
 
-### Gateway WebUI 显示 `1006 clean=false`
-
-这通常是浏览器到 Gateway 的 WebSocket/Nginx 代理问题，不一定是容器 Agent 的问题。Gateway 前的 Nginx 通常需透传：
+还应确认反向代理正确支持 WebSocket：
 
 ```nginx
 proxy_http_version 1.1;
@@ -388,9 +421,82 @@ proxy_send_timeout 300s;
 proxy_buffering off;
 ```
 
-## 安全提醒
+### 容器 healthy，但 WebKit CPU 再次持续过高
 
-- `.env`、`data/`、`appimage/`、`workspace/` 已由 `.gitignore` 排除，不要手动提交到 Git；
-- 不要把 Gateway 共享管理 Token 填给 Agent；
-- 高权限模式下，对 `/host/...` 的删除和改动会直接作用于真实服务器；
-- 不要无意执行彻底重置命令；更新前建议备份。
+```bash
+docker stats
+docker compose top
+```
+
+建议依次检查：
+
+1. 是否仍有 `Local window unmapped` 日志；
+2. 是否误将 `LIVEAGENT_HEADLESS` 改为 `0`；
+3. 当前 AppImage 版本是否发生变化；
+4. 临时将 `CPU_LIMIT` 降低后重建；
+5. 回退到已验证的 `LIVEAGENT_VERSION`。
+
+### 恢复本地虚拟窗口映射（仅调试）
+
+默认服务器部署无需查看窗口。如需在X11调试，可临时在 Compose 中设置：
+
+```yaml
+LIVEAGENT_HEADLESS: "0"
+```
+
+然后重建容器。该模式可能显著提高空闲CPU占用，不建议长期启用。
+
+## GitHub 发布前的安全检查
+
+以下内容绝对不能提交到公开仓库：
+
+```text
+.env
+data/
+appimage/
+workspace/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+```
+
+`.gitignore` 只会忽略**尚未被Git跟踪**的文件。如果旧版本曾经提交过 `.env`，需执行：
+
+```bash
+git rm --cached .env
+```
+
+这只会取消Git跟踪，不会删除服务器上的 `.env`。提交前务必检查：
+
+```bash
+git status
+git diff --cached
+```
+
+推荐只提交：
+
+```text
+README.md
+.env.example
+.gitignore
+Dockerfile
+docker-compose.yml
+docker-compose.full-access.yml
+entrypoint.sh
+```
+
+若Token曾经被提交到Git历史或公开页面，应立即在Gateway中吊销并重新签发；仅从最新提交删除并不能消除历史泄露。
+
+## 彻底重置（危险）
+
+```bash
+docker compose down
+rm -rf data appimage workspace
+```
+
+该操作会删除Provider/API Key、聊天记录、Memory、Skills、Remote设置、下载的AppImage和工作文件。执行前请先备份。
+
+## 许可证与致谢
+
+- LiveAgent：<https://github.com/Stack-Cairn/LiveAgent>
+- 本仓库仅封装官方发布的Linux AppImage；LiveAgent本体遵循其上游项目许可证。

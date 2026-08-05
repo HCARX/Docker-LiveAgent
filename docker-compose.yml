@@ -51,7 +51,10 @@ services:
       LIVEAGENT_AGENT_TOKEN: ${LIVEAGENT_AGENT_TOKEN:-}
 
     volumes:
+      # LiveAgent 数据库、聊天历史、Memory 与已安装的 Skills。
       - ./data:/home/liveagent/.liveagent
+      # WebKit localStorage：保存 Skills 启用/选择状态及其他本地 UI 设置。
+      - ./webview-data:/home/liveagent/.local/share/com.xiaofei.liveagent
       - ./appimage:/opt/liveagent
       - ./workspace:/workspace
 
